@@ -1,7 +1,17 @@
+// ============================================
 // app/api/camel-tracker/data/route.ts
+// ============================================
 import { NextResponse } from 'next/server';
 import { AzureBlobService } from '@/lib/azure';
 import { csvParser } from '@/lib/csvParser';
+
+// Helper function to convert speed from m/s to km/h
+const convertSpeedToKmh = (data: any[]) => {
+  return data.map(row => ({
+    ...row,
+    Speed: row.Speed ? row.Speed * 3.6 : 0 // Convert m/s to km/h
+  }));
+};
 
 export async function GET(request: Request) {
   try {
@@ -28,11 +38,14 @@ export async function GET(request: Request) {
       numericFields: ['Time', 'Lat', 'Lon', 'Speed', 'Accel', 'Dist', 'AccX', 'AccY', 'AccZ']
     });
     
+    // Convert speed from m/s to km/h
+    const dataWithKmh = convertSpeedToKmh(transformedData);
+    
     return NextResponse.json({
-      data: transformedData,
+      data: dataWithKmh,
       metadata: {
         blobName,
-        totalRecords: transformedData.length,
+        totalRecords: dataWithKmh.length,
         source: 'camel-tracker'
       }
     });

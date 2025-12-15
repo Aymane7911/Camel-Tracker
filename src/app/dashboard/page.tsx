@@ -1,8 +1,9 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react';
-import { RefreshCw, Activity, Satellite, MapPin, Thermometer, Gauge, AlertCircle, Loader2, ChevronDown, ChevronRight, Calendar, TrendingUp, Edit2, Check, X, Image as ImageIcon, Menu, LogOut, BarChart3, Home, X as CloseIcon, Zap, Award, Timer } from 'lucide-react';
+import { RefreshCw, Activity, Satellite, MapPin, Thermometer, Gauge, AlertCircle, Loader2, ChevronDown, ChevronRight, Calendar, TrendingUp, Edit2, Check, X, Image as ImageIcon, Menu, LogOut, BarChart3, Home, X as CloseIcon, Zap, Award, Timer, Sparkles } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
+import { AIChatPanel } from '@/components/AIChatPanel';
 
 interface CamelTrackerData {
   Time: number;
@@ -76,6 +77,7 @@ const Dashboard = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
+  const [aiChatOpen, setAiChatOpen] = useState(false);
 
   useEffect(() => {
     // Load Leaflet CSS on client side only
@@ -125,21 +127,47 @@ const Dashboard = () => {
   };
 
   const fetchCamelRaces = async (camelId: string) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/camels/${camelId}`);
-      if (!response.ok) throw new Error('Failed to fetch camel races');
-      const result = await response.json();
-      setCamelRaces(result.races);
-      
-      if (result.races.length > 0) {
-        setSelectedRace(result.races[0].blobName);
-        setCurrentRaceData(result.races[0].data);
-      }
-    } catch (err) {
-      console.error('Error fetching camel races:', err);
-      throw err;
+  try {
+    console.log('🔍 [FETCH] Starting to fetch races for camel:', camelId);
+    const response = await fetch(`${API_BASE_URL}/camels/${camelId}`);
+    
+    if (!response.ok) {
+      console.error('❌ [FETCH] Response not OK:', response.status);
+      throw new Error('Failed to fetch camel races');
     }
-  };
+    
+    const result = await response.json();
+    console.log('✅ [FETCH] Successfully fetched races:', result.races.length);
+    
+    setCamelRaces(result.races);
+    
+    if (result.races.length > 0) {
+      const firstRace = result.races[0];
+      console.log('📊 [DATA] First race total data points:', firstRace.data.length);
+      console.log('📊 [DATA] First 5 data points:', firstRace.data.slice(0, 5));
+      console.log('📊 [DATA] Last 5 data points:', firstRace.data.slice(-5));
+      
+      // Check speed range
+      const speeds = firstRace.data.map(d => d.Speed || 0);
+      const minSpeed = Math.min(...speeds);
+      const maxSpeed = Math.max(...speeds);
+      console.log('🏃 [SPEED] Speed range:', minSpeed, 'to', maxSpeed, 'km/h');
+      
+      // Count data points by speed threshold
+      const below3 = speeds.filter(s => s < 3).length;
+      const above3 = speeds.filter(s => s >= 3).length;
+      console.log('📈 [SPEED] Points below 3 km/h:', below3);
+      console.log('📈 [SPEED] Points at/above 3 km/h:', above3);
+      
+      setSelectedRace(firstRace.blobName);
+      setCurrentRaceData(firstRace.data);
+      console.log('✅ [STATE] Current race data set with', firstRace.data.length, 'points');
+    }
+  } catch (err) {
+    console.error('❌ [FETCH] Error fetching camel races:', err);
+    throw err;
+  }
+};
 
   const fetchJockeyData = async () => {
     try {
@@ -184,13 +212,20 @@ const Dashboard = () => {
   }, [selectedCamel]);
 
   useEffect(() => {
-    if (currentRaceData.length > 0 && mapRef.current && typeof window !== 'undefined' && activeTab === 'camels') {
-      // Dynamically load Leaflet
-      const L = require('leaflet');
+   if (currentRaceData.length > 0 && mapRef.current && typeof window !== 'undefined' && activeTab === 'camels') {
+  console.log('🗺️ [MAP] Rendering map with', currentRaceData.length, 'data points');
+  
+  // Dynamically load Leaflet
+  const L = require('leaflet');
       
-      // Remove existing map instance
+      // Remove existing map instance safely
       if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
+        try {
+          mapInstanceRef.current.off();
+          mapInstanceRef.current.remove();
+        } catch (e) {
+          console.warn('Error removing map:', e);
+        }
         mapInstanceRef.current = null;
       }
 
@@ -198,53 +233,99 @@ const Dashboard = () => {
       const initMap = () => {
         if (!mapRef.current) return;
 
-        // Create new map
-        const map = L.map(mapRef.current).setView([currentRaceData[0].Lat, currentRaceData[0].Lon], 15);
-        
-        // Add tile layer
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
+        const mapData = currentRaceData; // Use ALL data
+  console.log('🗺️ [MAP] Using', mapData.length, 'points for map visualization');
+  
+  if (mapData.length === 0) {
+    console.warn('⚠️ [MAP] No map data available');
+    return;
+  }
 
-        // Create polyline from all points
-        const points: any[] = currentRaceData.map(d => [d.Lat, d.Lon]);
-        const polyline = L.polyline(points, { color: 'blue', weight: 3 }).addTo(map);
-        
-        // Add markers for each point
-        currentRaceData.forEach((d, idx) => {
-          const color = idx === 0 ? 'green' : idx === currentRaceData.length - 1 ? 'red' : 'blue';
-          L.circleMarker([d.Lat, d.Lon], {
-            radius: 5,
-            fillColor: color,
+        try {
+          // Clear the container
+          mapRef.current.innerHTML = '';
+          
+          // Create new map
+          const map = L.map(mapRef.current, {
+            zoomControl: true,
+            attributionControl: true
+          }).setView([mapData[0].Lat, mapData[0].Lon], 15);
+          
+          // Add tile layer
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+          }).addTo(map);
+
+          // Create polyline from filtered points
+          const points: any[] = mapData.map(d => [d.Lat, d.Lon]);
+          const polyline = L.polyline(points, { color: 'blue', weight: 3 }).addTo(map);
+          
+          // Add markers for start and finish only to reduce clutter
+          const startMarker = L.circleMarker([mapData[0].Lat, mapData[0].Lon], {
+            radius: 8,
+            fillColor: 'green',
             color: '#fff',
-            weight: 1,
+            weight: 2,
             opacity: 1,
-            fillOpacity: 0.8
+            fillOpacity: 0.9
           }).addTo(map).bindPopup(`
-            <b>${idx === 0 ? 'Start' : idx === currentRaceData.length - 1 ? 'Finish' : `Point ${idx + 1}`}</b><br>
-            Speed: ${d.Speed?.toFixed(2)} km/h<br>
-            Distance: ${d.Dist?.toFixed(2)} m
+            <b>Start</b><br>
+            Speed: ${mapData[0].Speed?.toFixed(2)} km/h<br>
+            Distance: ${mapData[0].Dist?.toFixed(2)} m
           `);
-        });
 
-        // Fit map to show all points
-        map.fitBounds(polyline.getBounds());
-        mapInstanceRef.current = map;
-        
-        // Force map to invalidate size after multiple delays to ensure proper rendering
-        setTimeout(() => map.invalidateSize(), 100);
-        setTimeout(() => map.invalidateSize(), 300);
-        setTimeout(() => map.invalidateSize(), 500);
+          const endIdx = mapData.length - 1;
+          const endMarker = L.circleMarker([mapData[endIdx].Lat, mapData[endIdx].Lon], {
+            radius: 8,
+            fillColor: 'red',
+            color: '#fff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9
+          }).addTo(map).bindPopup(`
+            <b>Finish</b><br>
+            Speed: ${mapData[endIdx].Speed?.toFixed(2)} km/h<br>
+            Distance: ${mapData[endIdx].Dist?.toFixed(2)} m
+          `);
+
+          // Fit map to show all points with padding
+          map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+          mapInstanceRef.current = map;
+          
+          // Force map to invalidate size after delays
+          setTimeout(() => {
+            if (mapInstanceRef.current) {
+              mapInstanceRef.current.invalidateSize();
+            }
+          }, 100);
+          setTimeout(() => {
+            if (mapInstanceRef.current) {
+              mapInstanceRef.current.invalidateSize();
+            }
+          }, 300);
+        } catch (error) {
+          console.error('Error initializing map:', error);
+        }
       };
 
       // Initialize map with a slight delay
-      setTimeout(initMap, 0);
+      const timeoutId = setTimeout(initMap, 100);
+      
+      return () => {
+        clearTimeout(timeoutId);
+      };
     }
 
-    // Cleanup on unmount
+    // Cleanup on unmount or when dependencies change
     return () => {
       if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
+        try {
+          mapInstanceRef.current.off();
+          mapInstanceRef.current.remove();
+        } catch (e) {
+          console.warn('Error cleaning up map:', e);
+        }
         mapInstanceRef.current = null;
       }
     };
@@ -260,33 +341,97 @@ const Dashboard = () => {
     return `${timeStr.substring(0, 2)}:${timeStr.substring(2, 4)}`;
   };
 
+  const getFilteredRaceData = (data: CamelTrackerData[]) => {
+  // Return complete unfiltered data
+  console.log('Total data points:', data.length); // Debug log
+  return data;
+};
+
   const getLatestMetrics = (data: CamelTrackerData[]) => {
-    if (data.length === 0) return null;
-    const latest = data[data.length - 1];
-    return {
-      speed: latest.Speed?.toFixed(2) || '0',
-      acceleration: latest.Accel?.toFixed(2) || '0',
-      distance: latest.Dist?.toFixed(2) || '0',
-      position: `${latest.Lat?.toFixed(5)}, ${latest.Lon?.toFixed(5)}`,
-      gForce: Math.sqrt(
-        Math.pow(latest.AccX || 0, 2) + 
-        Math.pow(latest.AccY || 0, 2) + 
-        Math.pow(latest.AccZ || 0, 2)
-      ).toFixed(2),
-      maxSpeed: Math.max(...data.map(d => d.Speed || 0)).toFixed(2),
-      avgSpeed: (data.reduce((sum, d) => sum + (d.Speed || 0), 0) / data.length).toFixed(2),
-      totalDistance: Math.max(...data.map(d => d.Dist || 0)).toFixed(2)
-    };
+  console.log('📊 [METRICS] Calculating metrics from', data.length, 'data points');
+  
+  if (data.length === 0) {
+    console.warn('⚠️ [METRICS] No data available for metrics');
+    return null;
+  }
+  
+  // Use ALL data without filtering
+  const latest = data[data.length - 1];
+  
+  const speeds = data.map(d => d.Speed || 0);
+  const maxSpeed = Math.max(...speeds);
+  const avgSpeed = speeds.reduce((sum, s) => sum + s, 0) / speeds.length;
+  
+  console.log('📊 [METRICS] Calculated:', {
+    totalPoints: data.length,
+    maxSpeed: maxSpeed.toFixed(2),
+    avgSpeed: avgSpeed.toFixed(2),
+    latestSpeed: (latest.Speed || 0).toFixed(2)
+  });
+  
+  return {
+    speed: latest.Speed?.toFixed(2) || '0',
+    acceleration: latest.Accel?.toFixed(2) || '0',
+    distance: latest.Dist?.toFixed(2) || '0',
+    position: `${latest.Lat?.toFixed(5)}, ${latest.Lon?.toFixed(5)}`,
+    gForce: Math.sqrt(
+      Math.pow(latest.AccX || 0, 2) + 
+      Math.pow(latest.AccY || 0, 2) + 
+      Math.pow(latest.AccZ || 0, 2)
+    ).toFixed(2),
+    maxSpeed: maxSpeed.toFixed(2),
+    avgSpeed: avgSpeed.toFixed(2),
+    totalDistance: Math.max(...data.map(d => d.Dist || 0)).toFixed(2)
   };
+};
+
+
 
   const getChartData = () => {
-    return currentRaceData.map((d, idx) => ({
-      index: idx,
-      speed: d.Speed || 0,
-      acceleration: d.Accel || 0,
-      distance: d.Dist || 0
-    }));
+  console.log('📈 [CHART] Getting chart data from currentRaceData:', currentRaceData.length, 'points');
+  
+  // Use ALL data without filtering
+  const data = currentRaceData;
+  
+  if (data.length === 0) {
+    console.warn('⚠️ [CHART] No data available for charts');
+    return [];
+  }
+  
+  // Log speed statistics
+  const speeds = data.map(d => d.Speed || 0);
+  console.log('📊 [CHART] Speed stats:', {
+    min: Math.min(...speeds).toFixed(2),
+    max: Math.max(...speeds).toFixed(2),
+    avg: (speeds.reduce((a, b) => a + b, 0) / speeds.length).toFixed(2)
+  });
+  
+  // Apply moving average smoothing to acceleration data
+  const smoothAcceleration = (dataArray: any[], windowSize: number = 20) => {
+    return dataArray.map((item, idx) => {
+      const start = Math.max(0, idx - Math.floor(windowSize / 2));
+      const end = Math.min(dataArray.length, idx + Math.floor(windowSize / 2) + 1);
+      const window = dataArray.slice(start, end);
+      const avg = window.reduce((sum, d) => sum + (d.Accel || 0), 0) / window.length;
+      return avg;
+    });
   };
+  
+  const smoothedAccel = smoothAcceleration(data);
+  
+  const chartData = data.map((d, idx) => ({
+    index: idx,
+    speed: d.Speed || 0,
+    acceleration: smoothedAccel[idx],
+    distance: d.Dist || 0
+  }));
+  
+  console.log('✅ [CHART] Chart data prepared with', chartData.length, 'points');
+  console.log('📊 [CHART] First 3 chart points:', chartData.slice(0, 3));
+  
+  return chartData;
+};
+
 
   const getJockeyMetrics = () => {
     if (jockeyData.length === 0) return null;
@@ -418,10 +563,6 @@ const Dashboard = () => {
               <span>Camel Races</span>
               <div className="ml-auto bg-white/20 px-2 py-0.5 rounded-full text-xs">{camels.length}</div>
             </button>
-
-            
-
-            
           </nav>
 
           {/* Camels List */}
@@ -498,14 +639,25 @@ const Dashboard = () => {
                 </p>
               </div>
             </div>
-            <button
-              onClick={fetchAllData}
-              disabled={loading}
-              className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3 rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 transition-all shadow-lg hover:shadow-xl font-medium"
-            >
-              <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-              Refresh Data
-            </button>
+            <div className="flex items-center gap-3">
+              {/* AI Assistant Button */}
+              <button
+                onClick={() => setAiChatOpen(true)}
+                className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-3 rounded-xl hover:from-purple-700 hover:to-pink-700 transition-all shadow-lg hover:shadow-xl font-medium"
+              >
+                <Sparkles className="w-5 h-5" />
+                AI Assistant
+              </button>
+              
+              <button
+                onClick={fetchAllData}
+                disabled={loading}
+                className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3 rounded-xl hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 transition-all shadow-lg hover:shadow-xl font-medium"
+              >
+                <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+                Refresh Data
+              </button>
+            </div>
           </div>
           {error && (
             <div className="mx-8 mb-4 bg-red-50 border-l-4 border-red-500 rounded-r-lg p-4 flex items-center gap-3 text-red-700 shadow-sm">
@@ -584,7 +736,37 @@ const Dashboard = () => {
                   </div>
                 </div>
 
-                
+                <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+                  <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                    <BarChart3 className="w-6 h-6 text-purple-600" />
+                    System Overview
+                  </h3>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <Activity className="w-6 h-6 text-blue-600" />
+                        <span className="font-medium text-gray-700">Active Trackers</span>
+                      </div>
+                      <span className="text-2xl font-bold text-blue-600">{camels.length}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <Timer className="w-6 h-6 text-green-600" />
+                        <span className="font-medium text-gray-700">Total Sessions</span>
+                      </div>
+                      <span className="text-2xl font-bold text-green-600">{camels.reduce((sum, c) => sum + c.totalRaces, 0)}</span>
+                    </div>
+                    <div className="flex items-center justify-between p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl">
+                      <div className="flex items-center gap-3">
+                        <Award className="w-6 h-6 text-purple-600" />
+                        <span className="font-medium text-gray-700">Avg Races/Camel</span>
+                      </div>
+                      <span className="text-2xl font-bold text-purple-600">
+                        {camels.length > 0 ? (camels.reduce((sum, c) => sum + c.totalRaces, 0) / camels.length).toFixed(1) : '0'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Quick Stats if race is selected */}
@@ -744,13 +926,41 @@ const Dashboard = () => {
                         <LineChart data={chartData}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                           <XAxis dataKey="index" stroke="#6b7280" style={{ fontSize: '12px' }} />
-                          <YAxis yAxisId="left" stroke="#6b7280" style={{ fontSize: '12px' }} />
-                          <YAxis yAxisId="right" orientation="right" stroke="#6b7280" style={{ fontSize: '12px' }} />
+                          <YAxis 
+                            yAxisId="left" 
+                            stroke="#8b5cf6" 
+                            style={{ fontSize: '12px' }}
+                            domain={['auto', 'auto']}
+                            label={{ value: 'Acceleration (m/s²)', angle: -90, position: 'insideLeft', style: { fill: '#8b5cf6' } }}
+                          />
+                          <YAxis 
+                            yAxisId="right" 
+                            orientation="right" 
+                            stroke="#f59e0b" 
+                            style={{ fontSize: '12px' }}
+                            label={{ value: 'Distance (m)', angle: 90, position: 'insideRight', style: { fill: '#f59e0b' } }}
+                          />
                           <Tooltip 
                             contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
                           />
-                          <Line yAxisId="left" type="monotone" dataKey="acceleration" stroke="#8b5cf6" strokeWidth={3} dot={false} />
-                          <Line yAxisId="right" type="monotone" dataKey="distance" stroke="#f59e0b" strokeWidth={3} dot={false} />
+                          <Line 
+                            yAxisId="left" 
+                            type="monotone" 
+                            dataKey="acceleration" 
+                            stroke="#8b5cf6" 
+                            strokeWidth={2} 
+                            dot={false}
+                            name="Acceleration (m/s²)"
+                          />
+                          <Line 
+                            yAxisId="right" 
+                            type="monotone" 
+                            dataKey="distance" 
+                            stroke="#f59e0b" 
+                            strokeWidth={2} 
+                            dot={false}
+                            name="Distance (m)"
+                          />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
@@ -989,6 +1199,7 @@ const Dashboard = () => {
           onClick={() => setSidebarOpen(false)}
         ></div>
       )}
+      <AIChatPanel isOpen={aiChatOpen} onClose={() => setAiChatOpen(false)} />
     </div>
   );
 };

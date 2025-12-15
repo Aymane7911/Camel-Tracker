@@ -3,20 +3,26 @@ import { NextResponse } from 'next/server';
 import { AzureBlobService } from '@/lib/azure';
 import { csvParser } from '@/lib/csvParser';
 
+// Helper function to convert speed from m/s to km/h
+const convertSpeedToKmh = (data: any[]) => {
+  return data.map(row => ({
+    ...row,
+    Speed: row.Speed ? row.Speed * 3.6 : 0 // Convert m/s to km/h
+  }));
+};
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ camelId: string }> }
 ) {
   try {
-    // Await params in Next.js 15
     const { camelId } = await params;
     const { searchParams } = new URL(request.url);
-    const raceBlob = searchParams.get('race'); // Optional: specific race
+    const raceBlob = searchParams.get('race');
     
     const azureService = new AzureBlobService('trainingdata');
     const allBlobs = await azureService.listBlobs();
     
-    // Find all races for this camel
     const camelRaces = allBlobs.filter(blob => 
       blob.name.startsWith('race_') && 
       blob.name.endsWith('.csv') &&
@@ -29,7 +35,6 @@ export async function GET(
       }, { status: 404 });
     }
     
-    // If specific race requested, fetch only that one
     if (raceBlob) {
       const specificRace = camelRaces.find(b => b.name === raceBlob);
       if (!specificRace) {
@@ -52,18 +57,20 @@ export async function GET(
         numericFields: ['Time', 'Lat', 'Lon', 'Speed', 'Accel', 'Dist', 'AccX', 'AccY', 'AccZ']
       });
       
+      // Convert speed from m/s to km/h
+      const dataWithKmh = convertSpeedToKmh(transformedData);
+      
       return NextResponse.json({
         camelId,
         race: {
           blobName: specificRace.name,
           lastModified: specificRace.lastModified,
-          data: transformedData,
-          totalRecords: transformedData.length
+          data: dataWithKmh,
+          totalRecords: dataWithKmh.length
         }
       });
     }
     
-    // Fetch all races for this camel
     console.log(`📥 Fetching ${camelRaces.length} races for camel ${camelId}`);
     
     const racesData = await Promise.all(
@@ -81,7 +88,9 @@ export async function GET(
           numericFields: ['Time', 'Lat', 'Lon', 'Speed', 'Accel', 'Dist', 'AccX', 'AccY', 'AccZ']
         });
         
-        // Parse race info from filename
+        // Convert speed from m/s to km/h
+        const dataWithKmh = convertSpeedToKmh(transformedData);
+        
         const match = blob.name.match(/race_(\d{8})_(\d{4})_([^.]+)\.csv/);
         const [, date, time] = match || [];
         
@@ -90,13 +99,12 @@ export async function GET(
           date,
           time,
           lastModified: blob.lastModified,
-          data: transformedData,
-          totalRecords: transformedData.length
+          data: dataWithKmh,
+          totalRecords: dataWithKmh.length
         };
       })
     );
     
-    // Sort by date/time (most recent first)
     racesData.sort((a, b) => {
       const dateA = `${a.date}_${a.time}`;
       const dateB = `${b.date}_${b.time}`;

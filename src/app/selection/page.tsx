@@ -540,7 +540,7 @@ const CamelSelectionPage = () => {
                         <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
                       ) : (
                         <span className="text-sm font-bold text-gray-900">
-                          {stats ? `${stats.maxSpeed.toFixed(1)} m/s` : '-'}
+                          {stats ? `${stats.maxSpeed.toFixed(1)} km/h` : '-'}
                         </span>
                       )}
                     </div>
